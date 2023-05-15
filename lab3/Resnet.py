@@ -100,7 +100,7 @@ train_transforms = transforms.Compose([
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     # 0.485, 0.456, 0.406)，std= (0.229, 0.224, 0.225
-    # transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 ])
 
 # 加载训练数据
@@ -110,7 +110,7 @@ train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size,
 train_transforms = transforms.Compose([
     transforms.Resize((img_size, img_size)),
     transforms.ToTensor(),
-    # transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    transforms.Normalize([0.5, 0.5, 0.5], [0.5,0.5,0.5])
 ])
 
 # 加载验证数据
@@ -122,48 +122,92 @@ test_transforms = transforms.Compose([
     transforms.Resize((img_size, img_size)),
     # transforms.CenterCrop(img_size),
     transforms.ToTensor(),
-    # transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    transforms.Normalize([0.5, 0.5, 0.5], [0.5,0.5,0.5])
 ])
 test_dataset = GetTestLoader(test_dir, transform=test_transforms)
 test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
 
-class VGG11(nn.Module):
-    def __init__(self, num_classes=12):
-        super(VGG11, self).__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(128, 256, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(256, 256, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(256, 512, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-        )
 
-        self.classifier = nn.Sequential(
-            nn.Linear(512 * 7 * 7, 4096),
-            nn.ReLU(inplace=True),
-            nn.Dropout(),
-            nn.Linear(4096, 4096),
-            nn.ReLU(inplace=True),
-            nn.Dropout(),
-            nn.Linear(4096, num_classes),
-        )
+class BasicBlock(nn.Module):
+    expansion = 1
+
+    def __init__(self, in_channels, out_channels, stride=1):
+        super(BasicBlock, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_channels != out_channels * self.expansion:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels * self.expansion, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels * self.expansion)
+            )
+
+    def forward(self, x):
+        residual = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        out += self.shortcut(x)
+        out = self.relu(out)
+
+        return out
+
+
+class ResNet(nn.Module):
+    def __init__(self, block, layers, num_classes=12):
+        super(ResNet, self).__init__()
+        self.in_channels = 64
+
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+
+        self.layer1 = self.make_layer(block, 64, layers[0], stride=1)
+        self.layer2 = self.make_layer(block, 128, layers[1], stride=2)
+        self.layer3 = self.make_layer(block, 256, layers[2], stride=2)
+        self.layer4 = self.make_layer(block, 512, layers[3], stride=2)
+
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512 * block.expansion, num_classes)
+
+    def make_layer(self, block, out_channels, blocks, stride=1):
+        layers = []
+        layers.append(block(self.in_channels, out_channels, stride))
+        self.in_channels = out_channels * block.expansion
+        for _ in range(1, blocks):
+            layers.append(block(self.in_channels, out_channels))
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+
+        return x
+
+
+
 
     # #初始化权重
     # def initialize_weights(self):
@@ -176,15 +220,11 @@ class VGG11(nn.Module):
     #             nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
     #             nn.init.constant_(m.bias, 0)
 
-    def forward(self, x):
-        x = self.features(x)
-        x = torch.flatten(x, 1)
-        x = self.classifier(x)
-        return x
+
 
 
 def train():
-    model = VGG11()
+    model = ResNet(BasicBlock, [2, 2, 2, 2], num_classes=12)
     model = model.to(device)
     criterion = nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
@@ -241,8 +281,8 @@ def train():
 
 
 def test():
-    model = VGG11()
-    model.load_state_dict(torch.load('MODEL/' + 'VGG11_sgd_lr=0.01_bs=32_epoch=70' + '.pth'))
+    model = ResNet(BasicBlock, [2, 2, 2, 2], num_classes=12)
+    model.load_state_dict(torch.load('./ResNetestmodel.pth'))
     model = model.to(device)
     model.eval()
     num_labels = []
@@ -262,9 +302,9 @@ def test():
         str_labels.append(key)
     file = os.listdir(test_dir)
     submission_df = pd.DataFrame({'file': file, 'species': str_labels})
-    submission_df.to_csv('VGG11.csv', index=False)
+    submission_df.to_csv('RESNET18.csv', index=False)
 
 if __name__ == '__main__':
-    setseed(53)
+    # setseed(53)
     train()
     test()

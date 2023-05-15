@@ -16,7 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 test_dir = "./test"
 train_dir = "./train"
 epochs = 100
-batch_size = 40
+batch_size = 32
 learning_rate = 0.001
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -106,12 +106,23 @@ class VGG11(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(512 * 7 * 7, 4096),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
+            nn.Dropout(),
             nn.Linear(4096, 4096),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
+            nn.Dropout(),
             nn.Linear(4096, num_classes),
         )
+
+    #初始化权重
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         x = self.features(x)
@@ -123,11 +134,11 @@ class VGG11(nn.Module):
 
 def train():
     model = VGG11()
-    model = model.to(device)
+    model = torch.nn.DataParallel(model).to(device)
     criterion = nn.CrossEntropyLoss().cuda()
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    # optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
-    # scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[ 5, 20, 40], gamma=0.1)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[ 5, 10, 15], gamma=0.1)
     best_loss = 999999
     tb_writer = SummaryWriter(log_dir='VGG11_sgd_lr=0.0001_bs=32_epoch=70'
                                       '/logs', comment='VGG11')
@@ -145,7 +156,7 @@ def train():
             optimizer.step()
             train_loss += loss.item() * inputs.size(0)
             _, preds = torch.max(outputs, 1)
-        # scheduler.step()
+        scheduler.step()
         # 添加到tensorboard
         train_loss = train_loss / len(train_loader.dataset)
         tb_writer.add_scalar('Train Loss', train_loss, epoch)
@@ -159,7 +170,7 @@ def train():
 
 def test():
     model = VGG11()
-    model.load_state_dict(torch.load('MODEL/' + 'VGG11_sgd_lr=0.01_bs=32_epoch=70' + '.pth'))
+    model.load_state_dict(torch.load('./ResNetestmodel.pth'))
     model = model.to(device)
     model.eval()
     num_labels = []
@@ -179,9 +190,9 @@ def test():
         str_labels.append(key)
     file = os.listdir(test_dir)
     submission_df = pd.DataFrame({'file': file, 'species': str_labels})
-    submission_df.to_csv('VGG11.csv', index=False)
+    submission_df.to_csv('resnet.csv', index=False)
 
 if __name__ == '__main__':
-    setseed(123)
+    # setseed(53)
     # train()
     test()
