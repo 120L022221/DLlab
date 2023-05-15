@@ -14,7 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 test_dir="./test"
 epochs=70
 batch_size = 32
-learning_rate = 0.001
+learning_rate = 0.01
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
@@ -261,6 +261,7 @@ def train():
     model = model.to(device)
     criterion=nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
+    scheduler =torch.optim.lr_scheduler.MultiStepLR(optimizer,milestones=[2,5,10,20],gamma=0.1)
     best_valid_acc = 0.0
     tb_writer = SummaryWriter(log_dir='VGG11_sgd_lr=0.0001_bs=32_epoch=70'
                                       '/logs', comment='VGG11')
