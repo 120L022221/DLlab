@@ -1,6 +1,6 @@
 import glob
 import shutil
-
+import time
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -29,7 +29,8 @@ args=parse_arguments()
 epochs = args.epochs
 batch_size = args.batch_size
 learning_rate = args.lr
-device = 'cuda' if args.gpu else 'cpu'
+# device = 'cuda' if args.gpu else 'cpu'
+device='cuda'
 test_dir = "./test"
 train_dir = "./train_dataset"
 val_dir = "./val_dataset"
@@ -232,11 +233,12 @@ def train():
     model = ResNet(BasicBlock, [2, 2, 2, 2], num_classes=12)
     model = model.to(device)
     criterion = nn.CrossEntropyLoss().cuda()
-    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    # optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
     # scheduler=torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[2, 5, 10, 20, 40], gamma=0.1)
     best_valid_acc = 0.0
-    tb_writer = SummaryWriter(log_dir='VGG11_sgd_lr=0.0001_bs=32_epoch=70'
-                                      '/logs', comment='VGG11')
+    tb_writer = SummaryWriter(log_dir='RESNET_SE_adam_lr=0.0001_bs=32_epoch=75_paint'
+                                      '/logs', comment='resnet18-se')
     for epoch in range(epochs):
         print(f'Epoch {epoch + 1}/{epochs}:')
         model.train()
@@ -280,14 +282,14 @@ def train():
         print(f'Valid loss: {valid_loss:.4f}, Valid acc: {valid_acc:.4f}')
         if valid_acc > best_valid_acc:
             best_valid_acc = valid_acc
-            torch.save(model.state_dict(), 'MODEL/' + 'VGG11_sgd_lr=0.0001_bs=32_epoch=70' + '.pth')
+            torch.save(model.state_dict(), 'MODEL/' + 'resnet_se_adam_lr=0.0001_bs=32_epoch=75_paint' + '.pth')
 
     print(f'Best validation accuracy: {best_valid_acc:.4f}')
 
 
 def test():
     model = ResNet(BasicBlock, [2, 2, 2, 2], num_classes=12)
-    model.load_state_dict(torch.load('./ResNetestmodel.pth'))
+    model.load_state_dict(torch.load('MODEL/' + 'resnet_se_adam_lr=0.0001_bs=32_epoch=75_paint' + '.pth'))
     model = model.to(device)
     model.eval()
     num_labels = []
@@ -295,21 +297,27 @@ def test():
     classes = datasets.ImageFolder(train_dir).class_to_idx
     dict_keys = list(classes.keys())
     dict_values = list(classes.values())
+    start_time = time.time()
     with torch.no_grad():
         for inputs in test_loader:
             inputs = inputs.to(device)
             outputs = model(inputs)
             index, predicts = torch.max(outputs, 1)
             num_labels = num_labels + predicts.detach().cpu().numpy().tolist()
+    #测试时间
+    end_time = time.time()
+    print('Image/s', 794.0/(end_time - start_time))
     for i in num_labels:
         index = dict_values.index(i)
         key = dict_keys[index]
         str_labels.append(key)
     file = os.listdir(test_dir)
     submission_df = pd.DataFrame({'file': file, 'species': str_labels})
-    submission_df.to_csv('RESNET18.csv', index=False)
+    submission_df.to_csv('RESNET18_se_adam_0.0001.csv', index=False)
 
 if __name__ == '__main__':
     # setseed(53)
+    if(device == 'cuda'):
+        print("now you are using CUDA")
     train()
     test()
